@@ -1,0 +1,53 @@
+name: slack-daily-summary
+description: Summarize the last 24h of Slack messages into a morning digest
+schedule: "0 9 * * 1-5"
+
+source:
+  adapter: slack
+  config:
+    channels:
+      - "#engineering"
+      - "#product"
+      - "#incidents"
+    lookback_hours: 24
+
+chain:
+  - step: summarize_channels
+    type: map
+    prompt: |
+      Summarize the following Slack messages from #{{ channel_name }}.
+      Focus on decisions made, action items, and unresolved questions.
+
+      Messages:
+      {{ messages }}
+    input: "{{ source.channels }}"
+    output: channel_summaries
+
+  - step: synthesize_digest
+    type: reduce
+    prompt: |
+      Create a concise morning digest from these channel summaries.
+      Group by theme, highlight blockers, and list open action items.
+
+      Summaries:
+      {{ channel_summaries }}
+    input: "{{ channel_summaries }}"
+    output: digest
+
+  - step: format_output
+    prompt: |
+      Format this digest for Slack using markdown.
+      Add emoji headers for each section. Keep it under 500 words.
+
+      {{ digest }}
+    output: formatted_digest
+
+sink:
+  adapter: slack
+  config:
+    channel: "#daily-digest"
+    template: "{{ formatted_digest }}"
+
+retry:
+  max_attempts: 3
+  backoff_seconds: 30

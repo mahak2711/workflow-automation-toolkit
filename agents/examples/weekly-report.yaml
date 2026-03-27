@@ -1,0 +1,56 @@
+name: weekly-report
+description: Generate a weekly engineering report from multiple data sources
+schedule: "0 17 * * 5"
+
+source:
+  adapter: multi
+  sources:
+    - adapter: slack
+      config:
+        channels: ["#engineering", "#deploys"]
+        lookback_hours: 168
+    - adapter: github
+      config:
+        repos: ["org/main-app", "org/infra"]
+        lookback_days: 7
+
+chain:
+  - step: gather_metrics
+    prompt: |
+      From the following deployment logs and PR data, extract:
+      - Number of deployments
+      - PRs merged
+      - Incidents and their resolution times
+      - Key features shipped
+
+      Data: {{ source.all }}
+    output: metrics
+
+  - step: draft_report
+    prompt: |
+      Write a professional weekly engineering report using these metrics.
+      Structure: Executive Summary, Shipped This Week, Metrics,
+      Incidents, Next Week Priorities.
+
+      {{ metrics }}
+    output: draft
+
+  - step: format_document
+    prompt: |
+      Polish this report for leadership. Tone: professional, concise.
+      Add a one-line TL;DR at the top.
+
+      {{ draft }}
+    output: final_report
+
+sink:
+  adapter: multi
+  targets:
+    - adapter: s3
+      config:
+        bucket: "{{ env.S3_BUCKET }}"
+        key: "reports/weekly/{{ now | date('%Y-%m-%d') }}.md"
+    - adapter: slack
+      config:
+        channel: "#engineering-leads"
+        template: "Weekly report is ready: {{ s3_url }}"

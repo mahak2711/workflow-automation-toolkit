@@ -1,0 +1,58 @@
+name: email-triage
+description: Classify incoming emails, extract action items, and route
+schedule: "*/5 * * * *"
+
+source:
+  adapter: gmail
+  config:
+    label: INBOX
+    unread_only: true
+    max_batch: 20
+
+chain:
+  - step: classify
+    prompt: |
+      Classify this email into one of: [urgent, action_required,
+      informational, spam, personal].
+
+      From: {{ email.sender }}
+      Subject: {{ email.subject }}
+      Body: {{ email.body | truncate(2000) }}
+
+      Respond with only the category name.
+    output: category
+
+  - step: extract_actions
+    condition: "{{ category in ['urgent', 'action_required'] }}"
+    prompt: |
+      Extract action items from this email as a JSON list.
+      Each item: {"task": "...", "assignee_hint": "...", "deadline_hint": "..."}
+
+      {{ email.body }}
+    output: action_items
+
+  - step: route
+    prompt: |
+      Given category={{ category }} and actions={{ action_items }},
+      determine the best routing:
+      - urgent -> #incidents + page on-call
+      - action_required -> #tasks + assign
+      - informational -> #fyi
+      - spam -> archive
+      - personal -> forward to recipient
+    output: routing
+
+sink:
+  adapter: multi
+  targets:
+    - adapter: slack
+      condition: "{{ category != 'spam' }}"
+      config:
+        channel: "{{ routing.channel }}"
+    - adapter: gmail
+      config:
+        action: "{{ routing.gmail_action }}"
+
+retry:
+  max_attempts: 2
+  backoff_seconds: 15
